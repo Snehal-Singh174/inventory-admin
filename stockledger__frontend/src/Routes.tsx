@@ -33,11 +33,6 @@ const Routes: React.FC = () => {
               {/* Item detail — must come after /inventory for correct route matching */}
               <Route path="/inventory/:id" element={<ItemDetail />} />
 
-              {/* Placeholder routes for screens built in later tasks */}
-              <Route path="/products"  element={<ComingSoon title="Products" />} />
-              <Route path="/movements" element={<ComingSoon title="Stock Movements" />} />
-              <Route path="/suppliers" element={<ComingSoon title="Suppliers" />} />
-
               {/* Audit Log — Editor-only screen */}
               <Route path="/audit-log" element={<AuditLog />} />
 
@@ -55,17 +50,5 @@ const Routes: React.FC = () => {
     </BrowserRouter>
   );
 };
-
-/** Minimal placeholder for routes that will be built in subsequent tasks. */
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div className="flex flex-col gap-2 py-8">
-      <h2 className="text-2xl font-bold text-onBackground">{title}</h2>
-      <p className="text-sm text-muted-foreground">
-        This screen is being built in the next task. Navigation and auth are fully functional.
-      </p>
-    </div>
-  );
-}
 
 export default Routes;

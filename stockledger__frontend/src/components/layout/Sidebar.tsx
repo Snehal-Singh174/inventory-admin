@@ -2,9 +2,6 @@ import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
-  Package,
-  ArrowRightLeft,
-  Truck,
   ScrollText,
   Database,
   ChevronLeft,
@@ -23,10 +20,7 @@ interface NavItem {
 }
 
 const MAIN_NAV: NavItem[] = [
-  { label: 'Inventory',        path: '/inventory',  Icon: LayoutDashboard },
-  { label: 'Products',         path: '/products',   Icon: Package },
-  { label: 'Stock Movements',  path: '/movements',  Icon: ArrowRightLeft },
-  { label: 'Suppliers',        path: '/suppliers',  Icon: Truck },
+  { label: 'Inventory', path: '/inventory', Icon: LayoutDashboard },
 ];
 
 const ADMIN_NAV: NavItem[] = [

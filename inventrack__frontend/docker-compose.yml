@@ -1,0 +1,19 @@
+services:
+  inventrack-frontend:
+    container_name: inventrack-frontend
+    image: node:22.13.0-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "4020:4020"
+    env_file:
+      - path: .env
+        required: false
+    command: sh -c "npm install && npx vite --host 0.0.0.0 --port 4020"
+    networks:
+      - shared_network
+
+networks:
+  shared_network:
+    name: shared_network

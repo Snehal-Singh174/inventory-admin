@@ -46,6 +46,8 @@ services:
         value: 8h
       - key: BCRYPT_ROUNDS
         value: 12
+      - key: ALLOWED_ORIGINS
+        value: https://stockledger-frontend.onrender.com
 
   # ─── Frontend (static site) ─────────────────────────────────────────────────
   - type: web

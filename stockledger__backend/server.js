@@ -5,23 +5,46 @@ require('dotenv').config();
 const express = require('express');
 const { testConnection } = require('./db');
 
-const healthRouter    = require('./routes/health');
-const authRouter      = require('./routes/auth');
-const itemsRouter     = require('./routes/items');
+const healthRouter     = require('./routes/health');
+const authRouter       = require('./routes/auth');
+const itemsRouter      = require('./routes/items');
 const categoriesRouter = require('./routes/categories');
-const suppliersRouter = require('./routes/suppliers');
-const auditLogRouter  = require('./routes/auditLog');
+const suppliersRouter  = require('./routes/suppliers');
+const auditLogRouter   = require('./routes/auditLog');
 
 const PORT = parseInt(process.env.PORT || '4020', 10);
 
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
 const app = express();
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed =
+    !origin ||
+    ALLOWED_ORIGINS.length === 0 ||
+    ALLOWED_ORIGINS.includes(origin) ||
+    /\.onrender\.com$/.test(origin);
+
+  if (allowed && origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 // ─── Body parsing ─────────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// ─── Preflight — nginx handles CORS headers, we just 204 OPTIONS ──────────────
-app.options('*', (_req, res) => res.sendStatus(204));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api',            healthRouter);

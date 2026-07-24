@@ -1,0 +1,15 @@
+import { Router, Response } from 'express';
+
+const router = Router();
+
+let seeded = false;
+
+export function setSeeded(value: boolean): void {
+  seeded = value;
+}
+
+router.get('/health', (_req, res: Response) => {
+  res.status(200).json({ status: 'ok', seeded });
+});
+
+export default router;

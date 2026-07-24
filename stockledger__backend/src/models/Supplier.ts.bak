@@ -1,0 +1,68 @@
+import { DataTypes, Model, Optional } from 'sequelize';
+import { sequelize } from '../config/database';
+
+export interface SupplierAttributes {
+  id: string;
+  name: string;
+  contact_email: string | null;
+  phone: string | null;
+  address: string | null;
+  created_at: Date;
+  created_by: string;
+}
+
+interface SupplierCreationAttributes extends Optional<SupplierAttributes, 'id' | 'contact_email' | 'phone' | 'address' | 'created_at'> {}
+
+export class Supplier extends Model<SupplierAttributes, SupplierCreationAttributes> implements SupplierAttributes {
+  declare id: string;
+  declare name: string;
+  declare contact_email: string | null;
+  declare phone: string | null;
+  declare address: string | null;
+  declare created_at: Date;
+  declare created_by: string;
+}
+
+Supplier.init(
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    name: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+    },
+    contact_email: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: null,
+    },
+    phone: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      defaultValue: null,
+    },
+    address: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: null,
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    created_by: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+  },
+  {
+    sequelize,
+    tableName: 'suppliers',
+    modelName: 'Supplier',
+    timestamps: false,
+  }
+);

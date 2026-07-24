@@ -1,0 +1,72 @@
+import express from 'express';
+import { config } from './config';
+import { connectDatabase, sequelize } from './config/database';
+import { errorHandler } from './middleware';
+import authRoutes from './routes/auth';
+import healthRouter, { setSeeded } from './routes/health';
+import categoryRoutes from './routes/categories';
+import supplierRoutes from './routes/suppliers';
+import itemRoutes from './routes/items';
+import auditLogRoutes from './routes/auditLog';
+
+// Import models to register them with Sequelize before sync (includes associations)
+import './models';
+
+const app = express();
+
+// Body parsing
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Global preflight handler — no CORS headers (nginx adds them)
+app.options('*', (_req, res) => res.sendStatus(204));
+
+// Routes
+app.use('/api', healthRouter);
+app.use('/api/auth', authRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/suppliers', supplierRoutes);
+app.use('/api/items', itemRoutes);
+app.use('/api/audit-log', auditLogRoutes);
+
+// Centralized error handler (must be last)
+app.use(errorHandler);
+
+// Startup sequence
+async function bootstrap(): Promise<void> {
+  // 1. Connect to database with retry
+  await connectDatabase(5);
+
+  // 2. Sync schema (create tables if they don't exist)
+  await sequelize.sync({ alter: false });
+  console.log('[db] Schema synced');
+
+  // 3. Run startup seed
+  const { runSeed } = await import('./services/seed');
+  const seedResult = await runSeed();
+  setSeeded(seedResult);
+  console.log(`[boot] Seed completed: ${seedResult}`);
+
+  // 4. Start HTTP server
+  app.listen(config.port, '0.0.0.0', () => {
+    console.log(`[server] StockLedger API running on 0.0.0.0:${config.port}`);
+  });
+}
+
+// Unhandled error handlers
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] Unhandled rejection:', reason);
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] Uncaught exception:', err);
+  process.exit(1);
+});
+
+bootstrap().catch((err) => {
+  console.error('[fatal] Bootstrap failed:', err);
+  process.exit(1);
+});
+
+export default app;

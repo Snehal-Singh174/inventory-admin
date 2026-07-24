@@ -1,0 +1,488 @@
+import { Router, Response, NextFunction } from 'express';
+import { Op, UniqueConstraintError, WhereOptions } from 'sequelize';
+import ExcelJS from 'exceljs';
+import { InventoryItem } from '../models/InventoryItem';
+import { AuditLog } from '../models/AuditLog';
+import { Category } from '../models/Category';
+import { Supplier } from '../models/Supplier';
+import { User } from '../models/User';
+import { authenticate, AuthenticatedRequest, requireRole } from '../middleware';
+import { recordAudit, computeChangedFields } from '../services/auditService';
+import { sendData, sendList, createAppError } from '../utils/response';
+
+const router = Router();
+
+const VALID_STATUSES = ['ACTIVE', 'DISCONTINUED'] as const;
+type ItemStatus = (typeof VALID_STATUSES)[number];
+
+const ITEM_FIELDS = [
+  'id', 'item_name', 'sku', 'category_id', 'quantity', 'unit_cost',
+  'supplier_id', 'status', 'created_at', 'updated_at', 'created_by', 'updated_by',
+];
+
+const INCLUDE_ASSOC = [
+  { model: Category, as: 'category', attributes: ['id', 'name'] },
+  { model: Supplier, as: 'supplier', attributes: ['id', 'name'] },
+];
+
+function toPlainItem(item: InventoryItem): Record<string, unknown> {
+  const j = item.toJSON() as unknown as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const k of ITEM_FIELDS) result[k] = j[k];
+  return result;
+}
+
+function formatItem(item: InventoryItem): Record<string, unknown> {
+  const j = item.toJSON() as unknown as Record<string, unknown>;
+  const unitCost = typeof j.unit_cost === 'number' ? j.unit_cost : parseFloat(j.unit_cost as string || '0');
+  const qty = Number(j.quantity);
+  return {
+    ...j,
+    unit_cost: unitCost,
+    total_value: parseFloat((qty * unitCost).toFixed(2)),
+  };
+}
+
+function buildWhere(query: Record<string, unknown>): WhereOptions {
+  const where: Record<string | symbol, unknown> = {};
+
+  if (query.status && VALID_STATUSES.includes(query.status as ItemStatus)) {
+    where.status = query.status;
+  }
+
+  if (query.category) {
+    const raw = query.category as string;
+    const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    where.category_id = ids.length === 1 ? ids[0] : { [Op.in]: ids };
+  }
+
+  const qMin = query.quantityMin !== undefined ? parseInt(query.quantityMin as string, 10) : NaN;
+  const qMax = query.quantityMax !== undefined ? parseInt(query.quantityMax as string, 10) : NaN;
+  if (!isNaN(qMin) || !isNaN(qMax)) {
+    const qf: Record<symbol, number> = {};
+    if (!isNaN(qMin)) qf[Op.gte] = qMin;
+    if (!isNaN(qMax)) qf[Op.lte] = qMax;
+    where.quantity = qf;
+  }
+
+  if (query.keyword && typeof query.keyword === 'string' && query.keyword.trim()) {
+    const kw = `%${query.keyword.trim()}%`;
+    where[Op.or as unknown as string] = [
+      { item_name: { [Op.iLike]: kw } },
+      { sku: { [Op.iLike]: kw } },
+    ];
+  }
+
+  return where as WhereOptions;
+}
+
+const VALID_SORT_COLS: Record<string, string> = {
+  item_name: 'item_name',
+  sku: 'sku',
+  quantity: 'quantity',
+  unit_cost: 'unit_cost',
+  status: 'status',
+  created_at: 'created_at',
+  updated_at: 'updated_at',
+};
+
+function buildOrder(sortBy: string, dir: 'ASC' | 'DESC'): unknown[] {
+  if (sortBy === 'category') {
+    return [[{ model: Category, as: 'category' }, 'name', dir]];
+  }
+  if (sortBy === 'supplier') {
+    return [[{ model: Supplier, as: 'supplier' }, 'name', dir]];
+  }
+  if (VALID_SORT_COLS[sortBy]) {
+    return [[VALID_SORT_COLS[sortBy], dir]];
+  }
+  return [['created_at', 'DESC']];
+}
+
+// ─── GET /api/items ──────────────────────────────────────────────────────────
+router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const q = req.query as Record<string, string>;
+    const where = buildWhere(q);
+    const dir = q.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const order = buildOrder(q.sortBy || 'created_at', dir);
+    const page = Math.max(1, parseInt(q.page || '1', 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize || '20', 10)));
+
+    const { count, rows } = await InventoryItem.findAndCountAll({
+      where,
+      include: INCLUDE_ASSOC,
+      order: order as any,
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      distinct: true,
+    });
+
+    sendList(res, rows.map(formatItem), { total: count as number, page, pageSize });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /api/items/export ────────────────────────────────────────────────────
+router.get('/export', authenticate, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const q = req.query as Record<string, string>;
+    const where = buildWhere(q);
+    const dir = q.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const order = buildOrder(q.sortBy || 'created_at', dir);
+
+    const items = await InventoryItem.findAll({
+      where,
+      include: INCLUDE_ASSOC,
+      order: order as any,
+    });
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'StockLedger';
+    wb.created = new Date();
+    const ws = wb.addWorksheet('Inventory');
+
+    ws.columns = [
+      { header: 'Item Name',      key: 'item_name',   width: 32 },
+      { header: 'SKU',            key: 'sku',         width: 16 },
+      { header: 'Category',       key: 'category',    width: 22 },
+      { header: 'Quantity',       key: 'quantity',    width: 12 },
+      { header: 'Unit Cost ($)',  key: 'unit_cost',   width: 15 },
+      { header: 'Total Value ($)', key: 'total_value', width: 16 },
+      { header: 'Supplier',       key: 'supplier',    width: 22 },
+      { header: 'Status',         key: 'status',      width: 15 },
+      { header: 'Created At',     key: 'created_at',  width: 22 },
+      { header: 'Updated At',     key: 'updated_at',  width: 22 },
+    ];
+
+    const hdrRow = ws.getRow(1);
+    hdrRow.font = { bold: true };
+    hdrRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9ECEF' } };
+    hdrRow.alignment = { vertical: 'middle' };
+
+    for (const item of items) {
+      const j = item.toJSON() as unknown as Record<string, unknown>;
+      const cat = j.category as { name: string } | null;
+      const sup = j.supplier as { name: string } | null;
+      const unitCost = typeof j.unit_cost === 'number' ? j.unit_cost : parseFloat(j.unit_cost as string || '0');
+      const qty = Number(j.quantity);
+      ws.addRow({
+        item_name:   j.item_name,
+        sku:         j.sku,
+        category:    cat?.name || '',
+        quantity:    qty,
+        unit_cost:   unitCost,
+        total_value: parseFloat((qty * unitCost).toFixed(2)),
+        supplier:    sup?.name || '',
+        status:      j.status,
+        created_at:  j.created_at ? new Date(j.created_at as string).toISOString().slice(0, 19).replace('T', ' ') : '',
+        updated_at:  j.updated_at ? new Date(j.updated_at as string).toISOString().slice(0, 19).replace('T', ' ') : '',
+      });
+    }
+
+    const filename = `inventory-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/items/bulk-delete ─────────────────────────────────────────────
+router.post('/bulk-delete', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw createAppError('ids must be a non-empty array', 400, 'VALIDATION_ERROR');
+    }
+
+    const items = await InventoryItem.findAll({ where: { id: { [Op.in]: ids as string[] } } });
+    let deletedCount = 0;
+
+    for (const item of items) {
+      const beforeValues = toPlainItem(item);
+      await item.destroy();
+      deletedCount++;
+      await recordAudit({
+        entityType: 'INVENTORY_ITEM',
+        entityId: item.id,
+        entityLabel: item.sku,
+        action: 'DELETE',
+        userId: req.user!.sub,
+        beforeValues,
+        afterValues: null,
+      });
+    }
+
+    sendData(res, { deletedCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/items/bulk-status ─────────────────────────────────────────────
+router.post('/bulk-status', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { ids, status } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw createAppError('ids must be a non-empty array', 400, 'VALIDATION_ERROR');
+    }
+    if (!VALID_STATUSES.includes(status as ItemStatus)) {
+      throw createAppError('status must be ACTIVE or DISCONTINUED', 400, 'VALIDATION_ERROR');
+    }
+
+    const items = await InventoryItem.findAll({ where: { id: { [Op.in]: ids as string[] } } });
+    let updatedCount = 0;
+
+    for (const item of items) {
+      if (item.status === status) {
+        updatedCount++;
+        continue;
+      }
+      const beforeValues = toPlainItem(item);
+      await item.update({
+        status: status as ItemStatus,
+        updated_by: req.user!.sub,
+        updated_at: new Date(),
+      });
+      const afterValues = toPlainItem(item);
+      const changedFields = computeChangedFields(beforeValues, afterValues);
+      if (changedFields.length > 0) {
+        const diffBefore: Record<string, unknown> = {};
+        const diffAfter: Record<string, unknown> = {};
+        for (const f of changedFields) { diffBefore[f] = beforeValues[f]; diffAfter[f] = afterValues[f]; }
+        await recordAudit({
+          entityType: 'INVENTORY_ITEM',
+          entityId: item.id,
+          entityLabel: item.sku,
+          action: 'UPDATE',
+          userId: req.user!.sub,
+          beforeValues: diffBefore,
+          afterValues: diffAfter,
+          changedFields,
+        });
+      }
+      updatedCount++;
+    }
+
+    sendData(res, { updatedCount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /api/items/:id/audit ─────────────────────────────────────────────────
+// Editor only — audit trail scoped to this specific inventory item.
+// Returns all audit_log rows where entity_id = :id, newest first.
+router.get('/:id/audit', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const q = req.query as Record<string, string>;
+
+    const page = Math.max(1, parseInt(q.page || '1', 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize || '20', 10)));
+
+    const { count, rows } = await AuditLog.findAndCountAll({
+      where: { entity_id: id } as WhereOptions,
+      include: [{ model: User, as: 'actor', attributes: ['id', 'name', 'email'] }],
+      order: [['created_at', 'DESC']],
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      distinct: true,
+    });
+
+    sendList(res, rows.map((r) => r.toJSON()), { total: count as number, page, pageSize });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── GET /api/items/:id ───────────────────────────────────────────────────────
+router.get('/:id', authenticate, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const item = await InventoryItem.findByPk(req.params.id, { include: INCLUDE_ASSOC });
+    if (!item) throw createAppError('Item not found', 404, 'NOT_FOUND');
+    sendData(res, formatItem(item));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/items ──────────────────────────────────────────────────────────
+router.post('/', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const { item_name, sku, category_id, quantity, unit_cost, supplier_id, status = 'ACTIVE' } = req.body;
+
+    if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0) {
+      throw createAppError('item_name is required', 400, 'VALIDATION_ERROR');
+    }
+    if (item_name.trim().length > 150) {
+      throw createAppError('item_name must be 150 characters or fewer', 400, 'VALIDATION_ERROR');
+    }
+    if (!sku || typeof sku !== 'string' || sku.trim().length === 0) {
+      throw createAppError('sku is required', 400, 'VALIDATION_ERROR');
+    }
+    if (sku.trim().length > 50) {
+      throw createAppError('sku must be 50 characters or fewer', 400, 'VALIDATION_ERROR');
+    }
+    if (!category_id || typeof category_id !== 'string') {
+      throw createAppError('category_id is required', 400, 'VALIDATION_ERROR');
+    }
+    if (!supplier_id || typeof supplier_id !== 'string') {
+      throw createAppError('supplier_id is required', 400, 'VALIDATION_ERROR');
+    }
+    if (quantity === undefined || quantity === null || isNaN(Number(quantity)) || Number(quantity) < 0) {
+      throw createAppError('quantity must be a non-negative integer', 400, 'VALIDATION_ERROR');
+    }
+    if (unit_cost === undefined || unit_cost === null || isNaN(Number(unit_cost)) || Number(unit_cost) < 0) {
+      throw createAppError('unit_cost must be a non-negative number', 400, 'VALIDATION_ERROR');
+    }
+    if (!VALID_STATUSES.includes(status as ItemStatus)) {
+      throw createAppError('status must be ACTIVE or DISCONTINUED', 400, 'VALIDATION_ERROR');
+    }
+
+    const item = await InventoryItem.create({
+      item_name: item_name.trim(),
+      sku: sku.trim().toUpperCase(),
+      category_id,
+      quantity: Math.floor(Number(quantity)),
+      unit_cost: parseFloat(Number(unit_cost).toFixed(2)),
+      supplier_id,
+      status: status as ItemStatus,
+      created_by: req.user!.sub,
+      updated_by: req.user!.sub,
+    });
+
+    await recordAudit({
+      entityType: 'INVENTORY_ITEM',
+      entityId: item.id,
+      entityLabel: item.sku,
+      action: 'CREATE',
+      userId: req.user!.sub,
+      beforeValues: null,
+      afterValues: toPlainItem(item),
+    });
+
+    const full = await InventoryItem.findByPk(item.id, { include: INCLUDE_ASSOC });
+    sendData(res, formatItem(full!), 201);
+  } catch (err) {
+    if (err instanceof UniqueConstraintError) {
+      return next(createAppError('An item with this SKU already exists', 409, 'CONFLICT'));
+    }
+    next(err);
+  }
+});
+
+// ─── PATCH /api/items/:id ─────────────────────────────────────────────────────
+router.patch('/:id', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const item = await InventoryItem.findByPk(req.params.id);
+    if (!item) throw createAppError('Item not found', 404, 'NOT_FOUND');
+
+    const { item_name, sku, category_id, quantity, unit_cost, supplier_id, status } = req.body;
+    const updates: Record<string, unknown> = {};
+
+    if (item_name !== undefined) {
+      if (typeof item_name !== 'string' || item_name.trim().length === 0) {
+        throw createAppError('item_name cannot be empty', 400, 'VALIDATION_ERROR');
+      }
+      if (item_name.trim().length > 150) {
+        throw createAppError('item_name must be 150 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+      updates.item_name = item_name.trim();
+    }
+    if (sku !== undefined) {
+      if (typeof sku !== 'string' || sku.trim().length === 0) {
+        throw createAppError('sku cannot be empty', 400, 'VALIDATION_ERROR');
+      }
+      updates.sku = sku.trim().toUpperCase();
+    }
+    if (category_id !== undefined) updates.category_id = category_id;
+    if (supplier_id !== undefined) updates.supplier_id = supplier_id;
+    if (quantity !== undefined) {
+      if (isNaN(Number(quantity)) || Number(quantity) < 0) {
+        throw createAppError('quantity must be a non-negative integer', 400, 'VALIDATION_ERROR');
+      }
+      updates.quantity = Math.floor(Number(quantity));
+    }
+    if (unit_cost !== undefined) {
+      if (isNaN(Number(unit_cost)) || Number(unit_cost) < 0) {
+        throw createAppError('unit_cost must be a non-negative number', 400, 'VALIDATION_ERROR');
+      }
+      updates.unit_cost = parseFloat(Number(unit_cost).toFixed(2));
+    }
+    if (status !== undefined) {
+      if (!VALID_STATUSES.includes(status as ItemStatus)) {
+        throw createAppError('status must be ACTIVE or DISCONTINUED', 400, 'VALIDATION_ERROR');
+      }
+      updates.status = status;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw createAppError('No valid fields provided for update', 400, 'VALIDATION_ERROR');
+    }
+
+    const beforeValues = toPlainItem(item);
+    updates.updated_by = req.user!.sub;
+    updates.updated_at = new Date();
+
+    await item.update(updates);
+    const afterValues = toPlainItem(item);
+    const changedFields = computeChangedFields(beforeValues, afterValues);
+
+    if (changedFields.length > 0) {
+      const diffBefore: Record<string, unknown> = {};
+      const diffAfter: Record<string, unknown> = {};
+      for (const f of changedFields) { diffBefore[f] = beforeValues[f]; diffAfter[f] = afterValues[f]; }
+      await recordAudit({
+        entityType: 'INVENTORY_ITEM',
+        entityId: item.id,
+        entityLabel: item.sku,
+        action: 'UPDATE',
+        userId: req.user!.sub,
+        beforeValues: diffBefore,
+        afterValues: diffAfter,
+        changedFields,
+      });
+    }
+
+    const full = await InventoryItem.findByPk(item.id, { include: INCLUDE_ASSOC });
+    sendData(res, formatItem(full!));
+  } catch (err) {
+    if (err instanceof UniqueConstraintError) {
+      return next(createAppError('An item with this SKU already exists', 409, 'CONFLICT'));
+    }
+    next(err);
+  }
+});
+
+// ─── DELETE /api/items/:id ────────────────────────────────────────────────────
+router.delete('/:id', authenticate, requireRole('EDITOR'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const item = await InventoryItem.findByPk(req.params.id);
+    if (!item) throw createAppError('Item not found', 404, 'NOT_FOUND');
+
+    const beforeValues = toPlainItem(item);
+    await item.destroy();
+
+    await recordAudit({
+      entityType: 'INVENTORY_ITEM',
+      entityId: String(beforeValues.id),
+      entityLabel: String(beforeValues.sku),
+      action: 'DELETE',
+      userId: req.user!.sub,
+      beforeValues,
+      afterValues: null,
+    });
+
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+export default router;

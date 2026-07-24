@@ -1,0 +1,143 @@
+import { Router, Response, NextFunction } from 'express';
+import { Op, WhereOptions } from 'sequelize';
+import { AuditLog } from '../models/AuditLog';
+import { User } from '../models/User';
+import { authenticate, AuthenticatedRequest, requireRole } from '../middleware';
+import { sendList } from '../utils/response';
+
+const router = Router();
+
+const VALID_ENTITY_TYPES = ['INVENTORY_ITEM', 'CATEGORY', 'SUPPLIER'];
+const VALID_ACTIONS = ['CREATE', 'UPDATE', 'DELETE'];
+
+/**
+ * Build a Sequelize WHERE clause for audit log queries.
+ * Accepts camelCase params (dateFrom, dateTo, userId, entityType, search)
+ * as well as legacy snake_case aliases (from, to, user_id, entity_type, entity_id).
+ */
+function buildAuditWhere(q: Record<string, string>): Record<string | symbol, unknown> {
+  const where: Record<string | symbol, unknown> = {};
+
+  // entityType (camelCase preferred; entity_type legacy)
+  const entityType = q.entityType || q.entity_type;
+  if (entityType && VALID_ENTITY_TYPES.includes(entityType)) {
+    where.entity_type = entityType;
+  }
+
+  // action
+  if (q.action && VALID_ACTIONS.includes(q.action)) {
+    where.action = q.action;
+  }
+
+  // userId (camelCase preferred; user_id legacy)
+  const userId = q.userId || q.user_id;
+  if (userId && typeof userId === 'string') {
+    where.user_id = userId;
+  }
+
+  // entity_id (legacy direct filter — used by /audit-log route when filtering a specific entity)
+  if (q.entity_id && typeof q.entity_id === 'string') {
+    where.entity_id = q.entity_id;
+  }
+
+  // Date range: dateFrom / dateTo (preferred) OR from / to (legacy)
+  const rawFrom = q.dateFrom || q.from;
+  const rawTo = q.dateTo || q.to;
+  if (rawFrom || rawTo) {
+    const dateFilter: Record<symbol, Date> = {};
+    if (rawFrom) {
+      const d = new Date(rawFrom);
+      if (!isNaN(d.getTime())) dateFilter[Op.gte] = d;
+    }
+    if (rawTo) {
+      const d = new Date(rawTo);
+      if (!isNaN(d.getTime())) {
+        // Include the full end day by setting time to end-of-day when only a date string is given
+        if (/^\d{4}-\d{2}-\d{2}$/.test(rawTo)) {
+          d.setHours(23, 59, 59, 999);
+        }
+        dateFilter[Op.lte] = d;
+      }
+    }
+    if (Object.getOwnPropertySymbols(dateFilter).length > 0) {
+      where.created_at = dateFilter;
+    }
+  }
+
+  // search — keyword search across entity_label (ILIKE)
+  const search = q.search || q.keyword;
+  if (search && typeof search === 'string' && search.trim()) {
+    where.entity_label = { [Op.iLike]: `%${search.trim()}%` };
+  }
+
+  return where;
+}
+
+// ─── GET /api/audit-log ───────────────────────────────────────────────────────
+// Editor only — paginated audit log with optional filters.
+// Query params: dateFrom, dateTo, userId, action, entityType, search
+// Legacy aliases:  from,     to,    user_id,          entity_type, keyword
+router.get(
+  '/',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const q = req.query as Record<string, string>;
+      const where = buildAuditWhere(q);
+
+      const page = Math.max(1, parseInt(q.page || '1', 10));
+      const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize || '20', 10)));
+
+      const { count, rows } = await AuditLog.findAndCountAll({
+        where: where as WhereOptions,
+        include: [{ model: User, as: 'actor', attributes: ['id', 'name', 'email'] }],
+        order: [['created_at', 'DESC']],
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        distinct: true,
+      });
+
+      sendList(res, rows.map((r) => r.toJSON()), { total: count as number, page, pageSize });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// ─── GET /api/audit-log/:entityId ────────────────────────────────────────────
+// Editor only — audit trail scoped to a single entity (e.g. one InventoryItem).
+// Supports additional date/action filters via query params.
+router.get(
+  '/:entityId',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const { entityId } = req.params;
+      const q = req.query as Record<string, string>;
+
+      const page = Math.max(1, parseInt(q.page || '1', 10));
+      const pageSize = Math.min(100, Math.max(1, parseInt(q.pageSize || '20', 10)));
+
+      // Merge entity_id lock-in with any additional filters
+      const extraWhere = buildAuditWhere(q);
+      const where: WhereOptions = { ...extraWhere, entity_id: entityId } as WhereOptions;
+
+      const { count, rows } = await AuditLog.findAndCountAll({
+        where,
+        include: [{ model: User, as: 'actor', attributes: ['id', 'name', 'email'] }],
+        order: [['created_at', 'DESC']],
+        limit: pageSize,
+        offset: (page - 1) * pageSize,
+        distinct: true,
+      });
+
+      sendList(res, rows.map((r) => r.toJSON()), { total: count as number, page, pageSize });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+export default router;

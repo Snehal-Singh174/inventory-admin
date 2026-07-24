@@ -1,0 +1,19 @@
+services:
+  stockledger-frontend:
+    container_name: stockledger-frontend
+    image: node:22.13.0-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "4000:4000"
+    env_file:
+      - path: .env
+        required: false
+    command: sh -c "npm install --legacy-peer-deps && npm run build && npm run serve"
+    networks:
+      - shared_network
+
+networks:
+  shared_network:
+    name: shared_network

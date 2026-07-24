@@ -1,0 +1,22 @@
+import { Response } from 'express';
+
+interface ListMeta {
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export function sendData(res: Response, data: unknown, statusCode = 200): void {
+  res.status(statusCode).json({ data });
+}
+
+export function sendList(res: Response, data: unknown[], meta: ListMeta): void {
+  res.status(200).json({ data, meta });
+}
+
+export function createAppError(message: string, status: number, code: string): Error & { status: number; code: string } {
+  const err = new Error(message) as Error & { status: number; code: string };
+  err.status = status;
+  err.code = code;
+  return err;
+}

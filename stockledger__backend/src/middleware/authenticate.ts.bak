@@ -1,0 +1,32 @@
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
+
+export interface JwtPayload {
+  sub: string;
+  role: 'VIEWER' | 'EDITOR';
+  iat?: number;
+  exp?: number;
+}
+
+export interface AuthenticatedRequest extends Request {
+  user?: JwtPayload;
+}
+
+export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED', status: 401 });
+    return;
+  }
+
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, config.jwt.secret) as JwtPayload;
+    req.user = payload;
+    next();
+  } catch (err) {
+    const message = (err as Error).name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token';
+    res.status(401).json({ error: message, code: 'AUTH_INVALID', status: 401 });
+  }
+}

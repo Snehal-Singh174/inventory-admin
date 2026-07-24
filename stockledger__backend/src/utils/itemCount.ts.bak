@@ -1,0 +1,22 @@
+import { QueryTypes } from 'sequelize';
+import { sequelize } from '../config/database';
+
+/**
+ * Safely counts inventory_items referencing a given category or supplier.
+ * Returns 0 if the inventory_items table does not yet exist (Module 3 not deployed).
+ */
+export async function safeItemCount(
+  field: 'category_id' | 'supplier_id',
+  id: string
+): Promise<number> {
+  try {
+    const rows = await sequelize.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM inventory_items WHERE ${field} = :id`,
+      { replacements: { id }, type: QueryTypes.SELECT }
+    );
+    return parseInt(rows[0]?.count ?? '0', 10);
+  } catch {
+    // inventory_items table doesn't exist yet — treat as 0
+    return 0;
+  }
+}

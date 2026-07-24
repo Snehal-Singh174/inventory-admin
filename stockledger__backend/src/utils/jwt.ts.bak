@@ -1,0 +1,8 @@
+import jwt from 'jsonwebtoken';
+import { config } from '../config';
+import { JwtPayload } from '../middleware/authenticate';
+
+export function signToken(userId: string, role: 'VIEWER' | 'EDITOR'): string {
+  const payload: JwtPayload = { sub: userId, role };
+  return jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn } as jwt.SignOptions);
+}

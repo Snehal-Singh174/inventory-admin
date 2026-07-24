@@ -1,0 +1,108 @@
+import { DataTypes, Model, Optional } from 'sequelize';
+import { sequelize } from '../config/database';
+
+export interface InventoryItemAttributes {
+  id: string;
+  item_name: string;
+  sku: string;
+  category_id: string;
+  quantity: number;
+  unit_cost: number;
+  supplier_id: string;
+  status: 'ACTIVE' | 'DISCONTINUED';
+  created_at: Date;
+  updated_at: Date;
+  created_by: string;
+  updated_by: string;
+}
+
+interface InventoryItemCreationAttributes
+  extends Optional<InventoryItemAttributes, 'id' | 'status' | 'created_at' | 'updated_at'> {}
+
+export class InventoryItem
+  extends Model<InventoryItemAttributes, InventoryItemCreationAttributes>
+  implements InventoryItemAttributes
+{
+  declare id: string;
+  declare item_name: string;
+  declare sku: string;
+  declare category_id: string;
+  declare quantity: number;
+  declare unit_cost: number;
+  declare supplier_id: string;
+  declare status: 'ACTIVE' | 'DISCONTINUED';
+  declare created_at: Date;
+  declare updated_at: Date;
+  declare created_by: string;
+  declare updated_by: string;
+}
+
+InventoryItem.init(
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    item_name: {
+      type: DataTypes.STRING(150),
+      allowNull: false,
+    },
+    sku: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+    },
+    category_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    },
+    unit_cost: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      get() {
+        const val = this.getDataValue('unit_cost');
+        return val != null ? parseFloat(val as unknown as string) : 0;
+      },
+    },
+    supplier_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+    // Use STRING to avoid ENUM type conflicts with existing PostgreSQL item_status type;
+    // application-layer validation enforces 'ACTIVE' | 'DISCONTINUED'.
+    status: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: 'ACTIVE',
+    } as any,
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    created_by: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+    updated_by: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+  },
+  {
+    sequelize,
+    tableName: 'inventory_items',
+    modelName: 'InventoryItem',
+    timestamps: false,
+  }
+);

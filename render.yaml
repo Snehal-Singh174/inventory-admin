@@ -1,64 +1,67 @@
-# render.yaml — InvenTrack Render Blueprint
-# Deploys: PostgreSQL database + Node/Express backend + React/Vite frontend
-# Docs: https://render.com/docs/blueprint-spec
+databases:
+  - name: stockledger-postgres
+    databaseName: stockledger
+    user: stockledger
+    plan: free
 
 services:
-  # ── 1. Backend (Web Service — Docker) ────────────────────────────────────────
-  - type: web
-    name: inventrack-backend
-    runtime: docker
-    dockerfilePath: ./inventrack__backend/Dockerfile
-    dockerContext: ./inventrack__backend
+  # ─── Database migration / seed job ─────────────────────────────────────────
+  - type: worker
+    name: stockledger-database
+    runtime: node
+    rootDir: stockledger__database
+    buildCommand: npm install
+    startCommand: npm start
     plan: free
-    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: "4010"
+        value: 4010
       - key: DATABASE_URL
         fromDatabase:
-          name: inventrack-db
+          name: stockledger-postgres
+          property: connectionString
+
+  # ─── Backend API ────────────────────────────────────────────────────────────
+  - type: web
+    name: stockledger-backend
+    runtime: node
+    rootDir: stockledger__backend
+    buildCommand: npm install
+    startCommand: npm start
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4020
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockledger-postgres
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
-      - key: JWT_REFRESH_SECRET
-        generateValue: true
-      - key: JWT_ACCESS_EXPIRY
-        value: 15m
-      - key: JWT_REFRESH_EXPIRY
-        value: 7d
+      - key: JWT_EXPIRES_IN
+        value: 8h
       - key: BCRYPT_ROUNDS
-        value: "12"
-      - key: CORS_ORIGIN
-        fromService:
-          name: inventrack-frontend
-          type: web
-          property: host
-          transform: "https://{value}"
+        value: 12
 
-  # ── 2. Frontend (Static Site) ────────────────────────────────────────────────
+  # ─── Frontend (static site) ─────────────────────────────────────────────────
   - type: web
-    name: inventrack-frontend
+    name: stockledger-frontend
     runtime: static
-    buildCommand: npm install && npm run build
-    staticPublishPath: ./build
-    rootDir: inventrack__frontend
+    rootDir: stockledger__frontend
+    buildCommand: npm install --legacy-peer-deps && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: true
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
-      - key: VITE_API_URL
+      - key: VITE_API_BASE_URL
         fromService:
-          name: inventrack-backend
+          name: stockledger-backend
           type: web
-          property: host
-          transform: "https://{value}"
-
-# ── 3. Database (PostgreSQL) ──────────────────────────────────────────────────
-databases:
-  - name: inventrack-db
-    plan: free
-    databaseName: inventrack_db
-    user: inventrack
+          property: hostURL

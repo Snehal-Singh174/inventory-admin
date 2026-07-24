@@ -1,0 +1,54 @@
+import { DataTypes, Model, Optional } from 'sequelize';
+import { sequelize } from '../config/database';
+
+export interface CategoryAttributes {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: Date;
+  created_by: string;
+}
+
+interface CategoryCreationAttributes extends Optional<CategoryAttributes, 'id' | 'description' | 'created_at'> {}
+
+export class Category extends Model<CategoryAttributes, CategoryCreationAttributes> implements CategoryAttributes {
+  declare id: string;
+  declare name: string;
+  declare description: string | null;
+  declare created_at: Date;
+  declare created_by: string;
+}
+
+Category.init(
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    name: {
+      type: DataTypes.STRING(60),
+      allowNull: false,
+    },
+    description: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: null,
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+    created_by: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+  },
+  {
+    sequelize,
+    tableName: 'categories',
+    modelName: 'Category',
+    timestamps: false,
+  }
+);

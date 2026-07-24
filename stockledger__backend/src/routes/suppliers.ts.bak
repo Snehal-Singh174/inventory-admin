@@ -1,0 +1,210 @@
+import { Router, Response, NextFunction } from 'express';
+import { Supplier } from '../models/Supplier';
+import { authenticate, AuthenticatedRequest, requireRole } from '../middleware';
+import { recordAudit, computeChangedFields } from '../services/auditService';
+import { sendData, sendList, createAppError } from '../utils/response';
+import { safeItemCount } from '../utils/itemCount';
+
+const router = Router();
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function toRecord(val: unknown): Record<string, unknown> {
+  return val as Record<string, unknown>;
+}
+
+// GET /api/suppliers — all authenticated users
+router.get(
+  '/',
+  authenticate,
+  async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const suppliers = await Supplier.findAll({ order: [['name', 'ASC']] });
+      const data = await Promise.all(
+        suppliers.map(async (sup) => ({
+          ...sup.toJSON(),
+          item_count: await safeItemCount('supplier_id', sup.id),
+        }))
+      );
+      sendList(res, data, { total: data.length, page: 1, pageSize: data.length });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/suppliers/:id — all authenticated users
+router.get(
+  '/:id',
+  authenticate,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const sup = await Supplier.findByPk(req.params.id);
+      if (!sup) throw createAppError('Supplier not found', 404, 'NOT_FOUND');
+      const item_count = await safeItemCount('supplier_id', sup.id);
+      sendData(res, { ...sup.toJSON(), item_count });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/suppliers — Editor only
+router.post(
+  '/',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, contact_email, phone, address } = req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        throw createAppError('name is required', 400, 'VALIDATION_ERROR');
+      }
+      if (name.trim().length > 100) {
+        throw createAppError('name must be 100 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+      if (contact_email && !EMAIL_RE.test(contact_email)) {
+        throw createAppError('contact_email must be a valid email address', 400, 'VALIDATION_ERROR');
+      }
+      if (phone && String(phone).length > 50) {
+        throw createAppError('phone must be 50 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+      if (address && String(address).length > 255) {
+        throw createAppError('address must be 255 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+
+      const supplier = await Supplier.create({
+        name: name.trim(),
+        contact_email: contact_email ? String(contact_email).trim() : null,
+        phone: phone ? String(phone).trim() : null,
+        address: address ? String(address).trim() : null,
+        created_by: req.user!.sub,
+      });
+
+      await recordAudit({
+        entityType: 'SUPPLIER',
+        entityId: supplier.id,
+        entityLabel: supplier.name,
+        action: 'CREATE',
+        userId: req.user!.sub,
+        beforeValues: null,
+        afterValues: toRecord(supplier.toJSON()),
+      });
+
+      sendData(res, supplier.toJSON(), 201);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// PATCH /api/suppliers/:id — Editor only
+router.patch(
+  '/:id',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const sup = await Supplier.findByPk(req.params.id);
+      if (!sup) throw createAppError('Supplier not found', 404, 'NOT_FOUND');
+
+      const { name, contact_email, phone, address } = req.body;
+
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.trim().length === 0) {
+          throw createAppError('name cannot be empty', 400, 'VALIDATION_ERROR');
+        }
+        if (name.trim().length > 100) {
+          throw createAppError('name must be 100 characters or fewer', 400, 'VALIDATION_ERROR');
+        }
+      }
+      if (contact_email !== undefined && contact_email !== null && contact_email !== '') {
+        if (!EMAIL_RE.test(contact_email)) {
+          throw createAppError('contact_email must be a valid email address', 400, 'VALIDATION_ERROR');
+        }
+      }
+      if (phone !== undefined && phone !== null && String(phone).length > 50) {
+        throw createAppError('phone must be 50 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+      if (address !== undefined && address !== null && String(address).length > 255) {
+        throw createAppError('address must be 255 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+
+      const beforeValues = toRecord(sup.toJSON());
+      const updates: Partial<{
+        name: string;
+        contact_email: string | null;
+        phone: string | null;
+        address: string | null;
+      }> = {};
+
+      if (name !== undefined) updates.name = name.trim();
+      if (contact_email !== undefined) updates.contact_email = contact_email ? String(contact_email).trim() : null;
+      if (phone !== undefined) updates.phone = phone ? String(phone).trim() : null;
+      if (address !== undefined) updates.address = address ? String(address).trim() : null;
+
+      await sup.update(updates);
+      const afterValues = toRecord(sup.toJSON());
+      const changedFields = computeChangedFields(beforeValues, afterValues);
+
+      if (changedFields.length > 0) {
+        await recordAudit({
+          entityType: 'SUPPLIER',
+          entityId: sup.id,
+          entityLabel: sup.name,
+          action: 'UPDATE',
+          userId: req.user!.sub,
+          beforeValues,
+          afterValues,
+          changedFields,
+        });
+      }
+
+      sendData(res, afterValues);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// DELETE /api/suppliers/:id — Editor only; blocked if referenced by inventory items
+router.delete(
+  '/:id',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const sup = await Supplier.findByPk(req.params.id);
+      if (!sup) throw createAppError('Supplier not found', 404, 'NOT_FOUND');
+
+      const itemCount = await safeItemCount('supplier_id', sup.id);
+      if (itemCount > 0) {
+        throw createAppError(
+          `Cannot delete — ${itemCount} item${itemCount === 1 ? '' : 's'} use this supplier`,
+          409,
+          'CONFLICT'
+        );
+      }
+
+      const beforeValues = toRecord(sup.toJSON());
+      await sup.destroy();
+
+      await recordAudit({
+        entityType: 'SUPPLIER',
+        entityId: String(beforeValues.id),
+        entityLabel: String(beforeValues.name),
+        action: 'DELETE',
+        userId: req.user!.sub,
+        beforeValues,
+        afterValues: null,
+      });
+
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+export default router;

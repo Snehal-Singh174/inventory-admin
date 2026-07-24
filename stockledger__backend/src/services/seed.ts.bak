@@ -1,0 +1,162 @@
+import bcrypt from 'bcryptjs';
+import { User } from '../models/User';
+import { Category } from '../models/Category';
+import { Supplier } from '../models/Supplier';
+import { InventoryItem } from '../models/InventoryItem';
+import { config } from '../config';
+
+const DEMO_USERS = [
+  {
+    name: 'Marcus Editor',
+    email: 'marcus.editor@stockledger.io',
+    password: 'EditStock#2026',
+    role: 'EDITOR' as const,
+  },
+  {
+    name: 'Priya Viewer',
+    email: 'priya.viewer@stockledger.io',
+    password: 'ViewStock#2026',
+    role: 'VIEWER' as const,
+  },
+];
+
+const DEMO_CATEGORIES = [
+  { name: 'Electronics',    description: 'Consumer electronics and components' },
+  { name: 'Packaging',      description: 'Boxes, wraps, and packing materials' },
+  { name: 'Office Supplies', description: 'Stationery and office equipment' },
+  { name: 'Furniture',      description: 'Desks, chairs, and shelving units' },
+  { name: 'Raw Materials',  description: 'Base materials for manufacturing' },
+];
+
+const DEMO_SUPPLIERS = [
+  { name: 'Acme Corp',         contact_email: 'supply@acme.io',         phone: '+1-800-226-3456', address: '123 Commerce St, Chicago, IL 60601' },
+  { name: 'GlobalParts Ltd',   contact_email: 'orders@globalparts.io',  phone: '+44-20-7946-0801', address: '45 Trade Way, London, EC1A 1BB' },
+  { name: 'OfficeWorld',       contact_email: 'sales@officeworld.io',   phone: '+1-888-633-4225', address: '890 Supply Ave, Atlanta, GA 30301' },
+  { name: 'PackRight Solutions', contact_email: 'info@packright.io',    phone: '+1-855-722-5748', address: '77 Industrial Blvd, Dallas, TX 75201' },
+  { name: 'MetalWorks Inc',    contact_email: 'contact@metalworks.io',  phone: '+1-800-638-2567', address: '500 Factory Rd, Detroit, MI 48201' },
+];
+
+// Inventory items reference categories and suppliers by name (resolved after they're seeded)
+const DEMO_ITEMS = [
+  { sku: 'ELEC-001', item_name: 'Laptop 15"',                  category: 'Electronics',    supplier: 'Acme Corp',          quantity: 45,  unit_cost: 899.99, status: 'ACTIVE' },
+  { sku: 'ELEC-002', item_name: 'USB-C Hub 7-Port',             category: 'Electronics',    supplier: 'GlobalParts Ltd',    quantity: 120, unit_cost: 34.99,  status: 'ACTIVE' },
+  { sku: 'ELEC-003', item_name: 'Wireless Mouse',               category: 'Electronics',    supplier: 'GlobalParts Ltd',    quantity: 85,  unit_cost: 22.50,  status: 'ACTIVE' },
+  { sku: 'ELEC-004', item_name: 'AAA Batteries (pack/24)',       category: 'Electronics',    supplier: 'GlobalParts Ltd',    quantity: 0,   unit_cost: 12.99,  status: 'DISCONTINUED' },
+  { sku: 'PACK-001', item_name: 'Cardboard Box 12"x12"',         category: 'Packaging',      supplier: 'PackRight Solutions', quantity: 500, unit_cost: 1.25,   status: 'ACTIVE' },
+  { sku: 'PACK-002', item_name: 'Bubble Wrap Roll 50m',          category: 'Packaging',      supplier: 'PackRight Solutions', quantity: 30,  unit_cost: 18.00,  status: 'ACTIVE' },
+  { sku: 'OFFC-001', item_name: 'A4 Copy Paper (500 sheets)',    category: 'Office Supplies', supplier: 'OfficeWorld',        quantity: 200, unit_cost: 6.50,   status: 'ACTIVE' },
+  { sku: 'OFFC-002', item_name: 'Ballpoint Pens (box/12)',       category: 'Office Supplies', supplier: 'OfficeWorld',        quantity: 8,   unit_cost: 4.25,   status: 'ACTIVE' },
+  { sku: 'FURN-001', item_name: 'Ergonomic Office Chair',        category: 'Furniture',      supplier: 'MetalWorks Inc',     quantity: 15,  unit_cost: 349.00, status: 'ACTIVE' },
+  { sku: 'FURN-002', item_name: 'Standing Desk 160cm',           category: 'Furniture',      supplier: 'MetalWorks Inc',     quantity: 6,   unit_cost: 699.00, status: 'ACTIVE' },
+  { sku: 'FURN-003', item_name: 'Plastic Storage Cabinet',       category: 'Furniture',      supplier: 'Acme Corp',          quantity: 3,   unit_cost: 89.00,  status: 'ACTIVE' },
+  { sku: 'RAWM-001', item_name: 'Aluminum Sheet 1m x 2m',        category: 'Raw Materials',  supplier: 'MetalWorks Inc',     quantity: 75,  unit_cost: 45.00,  status: 'ACTIVE' },
+];
+
+export async function runSeed(): Promise<boolean> {
+  let allSuccess = true;
+
+  // ── Seed users ────────────────────────────────────────────────────────────
+  let editorId: string | null = null;
+  for (const userData of DEMO_USERS) {
+    try {
+      const passwordHash = await bcrypt.hash(userData.password, config.bcrypt.rounds);
+      const [user, created] = await User.findOrCreate({
+        where: { email: userData.email },
+        defaults: {
+          name: userData.name,
+          email: userData.email,
+          password_hash: passwordHash,
+          role: userData.role,
+          is_active: true,
+        },
+      });
+
+      if (!created) {
+        await user.update({ password_hash: passwordHash, role: userData.role, is_active: true, name: userData.name });
+      }
+
+      if (userData.role === 'EDITOR') editorId = user.id;
+      console.log(`[seed] ${created ? 'Created' : 'Updated'} user: ${userData.email} (${userData.role})`);
+    } catch (err) {
+      console.error(`[seed] Failed to upsert user ${userData.email}:`, (err as Error).message);
+      allSuccess = false;
+    }
+  }
+
+  if (!editorId) {
+    console.warn('[seed] No editor user found — skipping reference data and inventory seed');
+    return false;
+  }
+
+  // ── Seed categories ───────────────────────────────────────────────────────
+  const categoryMap: Record<string, string> = {};
+  for (const catData of DEMO_CATEGORIES) {
+    try {
+      const [cat, created] = await Category.findOrCreate({
+        where: { name: catData.name },
+        defaults: { name: catData.name, description: catData.description, created_by: editorId },
+      });
+      categoryMap[catData.name] = cat.id;
+      console.log(`[seed] ${created ? 'Created' : 'Skipped'} category: ${catData.name}`);
+    } catch (err) {
+      console.error(`[seed] Failed to upsert category ${catData.name}:`, (err as Error).message);
+      allSuccess = false;
+    }
+  }
+
+  // ── Seed suppliers ────────────────────────────────────────────────────────
+  const supplierMap: Record<string, string> = {};
+  for (const supData of DEMO_SUPPLIERS) {
+    try {
+      const [sup, created] = await Supplier.findOrCreate({
+        where: { name: supData.name },
+        defaults: {
+          name: supData.name,
+          contact_email: supData.contact_email,
+          phone: supData.phone,
+          address: supData.address,
+          created_by: editorId,
+        },
+      });
+      supplierMap[supData.name] = sup.id;
+      console.log(`[seed] ${created ? 'Created' : 'Skipped'} supplier: ${supData.name}`);
+    } catch (err) {
+      console.error(`[seed] Failed to upsert supplier ${supData.name}:`, (err as Error).message);
+      allSuccess = false;
+    }
+  }
+
+  // ── Seed inventory items ──────────────────────────────────────────────────
+  for (const itemData of DEMO_ITEMS) {
+    try {
+      const category_id = categoryMap[itemData.category];
+      const supplier_id = supplierMap[itemData.supplier];
+
+      if (!category_id || !supplier_id) {
+        console.warn(`[seed] Skipping item ${itemData.sku}: missing category or supplier reference`);
+        continue;
+      }
+
+      const [, created] = await InventoryItem.findOrCreate({
+        where: { sku: itemData.sku },
+        defaults: {
+          item_name:   itemData.item_name,
+          sku:         itemData.sku,
+          category_id,
+          quantity:    itemData.quantity,
+          unit_cost:   itemData.unit_cost,
+          supplier_id,
+          status:      itemData.status as 'ACTIVE' | 'DISCONTINUED',
+          created_by:  editorId,
+          updated_by:  editorId,
+        },
+      });
+      console.log(`[seed] ${created ? 'Created' : 'Skipped'} item: ${itemData.sku} — ${itemData.item_name}`);
+    } catch (err) {
+      console.error(`[seed] Failed to upsert item ${itemData.sku}:`, (err as Error).message);
+      allSuccess = false;
+    }
+  }
+
+  return allSuccess;
+}

@@ -1,0 +1,86 @@
+import { DataTypes, Model, Optional } from 'sequelize';
+import { sequelize } from '../config/database';
+
+interface AuditLogAttributes {
+  id: string;
+  entity_type: 'INVENTORY_ITEM' | 'CATEGORY' | 'SUPPLIER';
+  entity_id: string;
+  entity_label: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  user_id: string;
+  before_values: Record<string, unknown> | null;
+  after_values: Record<string, unknown> | null;
+  changed_fields: string[] | null;
+  created_at: Date;
+}
+
+interface AuditLogCreationAttributes extends Optional<AuditLogAttributes, 'id' | 'before_values' | 'after_values' | 'changed_fields' | 'created_at'> {}
+
+export class AuditLog extends Model<AuditLogAttributes, AuditLogCreationAttributes> implements AuditLogAttributes {
+  declare id: string;
+  declare entity_type: 'INVENTORY_ITEM' | 'CATEGORY' | 'SUPPLIER';
+  declare entity_id: string;
+  declare entity_label: string;
+  declare action: 'CREATE' | 'UPDATE' | 'DELETE';
+  declare user_id: string;
+  declare before_values: Record<string, unknown> | null;
+  declare after_values: Record<string, unknown> | null;
+  declare changed_fields: string[] | null;
+  declare created_at: Date;
+}
+
+AuditLog.init(
+  {
+    id: {
+      type: DataTypes.UUID,
+      defaultValue: DataTypes.UUIDV4,
+      primaryKey: true,
+    },
+    entity_type: {
+      type: DataTypes.ENUM('INVENTORY_ITEM', 'CATEGORY', 'SUPPLIER'),
+      allowNull: false,
+    },
+    entity_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+    entity_label: {
+      type: DataTypes.STRING(255),
+      allowNull: false,
+    },
+    action: {
+      type: DataTypes.ENUM('CREATE', 'UPDATE', 'DELETE'),
+      allowNull: false,
+    },
+    user_id: {
+      type: DataTypes.UUID,
+      allowNull: false,
+    },
+    before_values: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: null,
+    },
+    after_values: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: null,
+    },
+    changed_fields: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: null,
+    },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+  },
+  {
+    sequelize,
+    tableName: 'audit_log',
+    modelName: 'AuditLog',
+    timestamps: false,
+  }
+);

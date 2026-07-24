@@ -1,0 +1,20 @@
+import { Response, NextFunction } from 'express';
+import { AuthenticatedRequest } from './authenticate';
+
+type Role = 'VIEWER' | 'EDITOR';
+
+export function requireRole(...allowedRoles: Role[]) {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED', status: 401 });
+      return;
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      res.status(403).json({ error: 'Forbidden — insufficient permissions', code: 'FORBIDDEN', status: 403 });
+      return;
+    }
+
+    next();
+  };
+}

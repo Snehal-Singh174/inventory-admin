@@ -1,0 +1,46 @@
+import { AuditLog } from '../models/AuditLog';
+
+type EntityType = 'INVENTORY_ITEM' | 'CATEGORY' | 'SUPPLIER';
+type ActionType = 'CREATE' | 'UPDATE' | 'DELETE';
+
+interface AuditEntry {
+  entityType: EntityType;
+  entityId: string;
+  entityLabel: string;
+  action: ActionType;
+  userId: string;
+  beforeValues?: Record<string, unknown> | null;
+  afterValues?: Record<string, unknown> | null;
+  changedFields?: string[] | null;
+}
+
+export async function recordAudit(entry: AuditEntry): Promise<void> {
+  try {
+    await AuditLog.create({
+      entity_type: entry.entityType,
+      entity_id: entry.entityId,
+      entity_label: entry.entityLabel,
+      action: entry.action,
+      user_id: entry.userId,
+      before_values: entry.beforeValues || null,
+      after_values: entry.afterValues || null,
+      changed_fields: entry.changedFields || null,
+    });
+  } catch (err) {
+    console.error('[audit] Failed to record audit entry:', (err as Error).message);
+  }
+}
+
+export function computeChangedFields(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): string[] {
+  const changed: string[] = [];
+  const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of allKeys) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      changed.push(key);
+    }
+  }
+  return changed;
+}

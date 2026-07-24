@@ -1,0 +1,78 @@
+import { Router, Request, Response, NextFunction } from 'express';
+import bcrypt from 'bcryptjs';
+import { User } from '../models/User';
+import { signToken } from '../utils/jwt';
+import { sendData, createAppError } from '../utils/response';
+import { authenticate, AuthenticatedRequest } from '../middleware';
+
+const router = Router();
+
+// POST /api/auth/login
+router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      throw createAppError('Email and password are required', 400, 'VALIDATION_ERROR');
+    }
+
+    const user = await User.findOne({ where: { email } });
+    if (!user) {
+      throw createAppError('Invalid credentials', 401, 'AUTH_FAILED');
+    }
+
+    if (!user.is_active) {
+      throw createAppError('Account deactivated. Contact your administrator.', 403, 'ACCOUNT_DISABLED');
+    }
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      throw createAppError('Invalid credentials', 401, 'AUTH_FAILED');
+    }
+
+    const token = signToken(user.id, user.role);
+
+    sendData(res, {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/auth/me
+router.get('/me', authenticate, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const user = await User.findByPk(req.user!.sub, {
+      attributes: ['id', 'name', 'email', 'role', 'is_active', 'created_at'],
+    });
+
+    if (!user || !user.is_active) {
+      throw createAppError('User not found or inactive', 401, 'AUTH_INVALID');
+    }
+
+    sendData(res, {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      created_at: user.created_at,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/auth/logout
+router.post('/logout', authenticate, (_req: AuthenticatedRequest, res: Response) => {
+  // Stateless JWT — client discards token. Server acknowledges.
+  sendData(res, { message: 'Logged out successfully' });
+});
+
+export default router;

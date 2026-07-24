@@ -1,0 +1,191 @@
+import { Router, Response, NextFunction } from 'express';
+import { UniqueConstraintError } from 'sequelize';
+import { Category } from '../models/Category';
+import { authenticate, AuthenticatedRequest, requireRole } from '../middleware';
+import { recordAudit, computeChangedFields } from '../services/auditService';
+import { sendData, sendList, createAppError } from '../utils/response';
+import { safeItemCount } from '../utils/itemCount';
+
+const router = Router();
+
+function toRecord(val: unknown): Record<string, unknown> {
+  return val as Record<string, unknown>;
+}
+
+// GET /api/categories — all authenticated users
+router.get(
+  '/',
+  authenticate,
+  async (_req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const categories = await Category.findAll({ order: [['name', 'ASC']] });
+      const data = await Promise.all(
+        categories.map(async (cat) => ({
+          ...cat.toJSON(),
+          item_count: await safeItemCount('category_id', cat.id),
+        }))
+      );
+      sendList(res, data, { total: data.length, page: 1, pageSize: data.length });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /api/categories/:id — all authenticated users
+router.get(
+  '/:id',
+  authenticate,
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const cat = await Category.findByPk(req.params.id);
+      if (!cat) throw createAppError('Category not found', 404, 'NOT_FOUND');
+      const item_count = await safeItemCount('category_id', cat.id);
+      sendData(res, { ...cat.toJSON(), item_count });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/categories — Editor only
+router.post(
+  '/',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const { name, description } = req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        throw createAppError('name is required', 400, 'VALIDATION_ERROR');
+      }
+      if (name.trim().length > 60) {
+        throw createAppError('name must be 60 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+      if (description !== undefined && description !== null && String(description).length > 255) {
+        throw createAppError('description must be 255 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+
+      const category = await Category.create({
+        name: name.trim(),
+        description: description ? String(description).trim() : null,
+        created_by: req.user!.sub,
+      });
+
+      await recordAudit({
+        entityType: 'CATEGORY',
+        entityId: category.id,
+        entityLabel: category.name,
+        action: 'CREATE',
+        userId: req.user!.sub,
+        beforeValues: null,
+        afterValues: toRecord(category.toJSON()),
+      });
+
+      sendData(res, category.toJSON(), 201);
+    } catch (err) {
+      if (err instanceof UniqueConstraintError) {
+        return next(createAppError('A category with this name already exists', 409, 'CONFLICT'));
+      }
+      next(err);
+    }
+  }
+);
+
+// PATCH /api/categories/:id — Editor only
+router.patch(
+  '/:id',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const cat = await Category.findByPk(req.params.id);
+      if (!cat) throw createAppError('Category not found', 404, 'NOT_FOUND');
+
+      const { name, description } = req.body;
+
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.trim().length === 0) {
+          throw createAppError('name cannot be empty', 400, 'VALIDATION_ERROR');
+        }
+        if (name.trim().length > 60) {
+          throw createAppError('name must be 60 characters or fewer', 400, 'VALIDATION_ERROR');
+        }
+      }
+      if (description !== undefined && description !== null && String(description).length > 255) {
+        throw createAppError('description must be 255 characters or fewer', 400, 'VALIDATION_ERROR');
+      }
+
+      const beforeValues = toRecord(cat.toJSON());
+      const updates: Partial<{ name: string; description: string | null }> = {};
+      if (name !== undefined) updates.name = name.trim();
+      if (description !== undefined) updates.description = description ? String(description).trim() : null;
+
+      await cat.update(updates);
+      const afterValues = toRecord(cat.toJSON());
+      const changedFields = computeChangedFields(beforeValues, afterValues);
+
+      if (changedFields.length > 0) {
+        await recordAudit({
+          entityType: 'CATEGORY',
+          entityId: cat.id,
+          entityLabel: cat.name,
+          action: 'UPDATE',
+          userId: req.user!.sub,
+          beforeValues,
+          afterValues,
+          changedFields,
+        });
+      }
+
+      sendData(res, afterValues);
+    } catch (err) {
+      if (err instanceof UniqueConstraintError) {
+        return next(createAppError('A category with this name already exists', 409, 'CONFLICT'));
+      }
+      next(err);
+    }
+  }
+);
+
+// DELETE /api/categories/:id — Editor only; blocked if referenced by inventory items
+router.delete(
+  '/:id',
+  authenticate,
+  requireRole('EDITOR'),
+  async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    try {
+      const cat = await Category.findByPk(req.params.id);
+      if (!cat) throw createAppError('Category not found', 404, 'NOT_FOUND');
+
+      const itemCount = await safeItemCount('category_id', cat.id);
+      if (itemCount > 0) {
+        throw createAppError(
+          `Cannot delete — ${itemCount} item${itemCount === 1 ? '' : 's'} use this category`,
+          409,
+          'CONFLICT'
+        );
+      }
+
+      const beforeValues = toRecord(cat.toJSON());
+      await cat.destroy();
+
+      await recordAudit({
+        entityType: 'CATEGORY',
+        entityId: String(beforeValues.id),
+        entityLabel: String(beforeValues.name),
+        action: 'DELETE',
+        userId: req.user!.sub,
+        beforeValues,
+        afterValues: null,
+      });
+
+      res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+export default router;

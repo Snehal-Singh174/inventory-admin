@@ -1,0 +1,12 @@
+import { User } from './User';
+import { AuditLog } from './AuditLog';
+import { Category } from './Category';
+import { Supplier } from './Supplier';
+import { InventoryItem } from './InventoryItem';
+
+// Associations — must be defined after all models are initialised
+InventoryItem.belongsTo(Category, { foreignKey: 'category_id', as: 'category' });
+InventoryItem.belongsTo(Supplier, { foreignKey: 'supplier_id', as: 'supplier' });
+AuditLog.belongsTo(User, { foreignKey: 'user_id', as: 'actor' });
+
+export { User, AuditLog, Category, Supplier, InventoryItem };

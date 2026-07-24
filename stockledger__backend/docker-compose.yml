@@ -1,0 +1,20 @@
+services:
+  stockledger-backend:
+    image: node:22.13.0-slim
+    container_name: stockledger-backend
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "4020:4020"
+    env_file:
+      - path: .env
+        required: false
+    command: sh -c "npm install && node server.js"
+    networks:
+      - shared_network
+
+networks:
+  shared_network:
+    name: shared_network

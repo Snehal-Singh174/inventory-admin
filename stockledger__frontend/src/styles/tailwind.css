@@ -1,0 +1,182 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* Manrope — geometric sans-serif, excellent legibility at small sizes */
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── Design Tokens ───────────────────────────────────────── */
+:root {
+  /* Brand */
+  --color-primary: #C62828;
+  --color-primary-100: #FFCDD2;
+  --color-primary-500: #E53935;
+
+  /* Secondary (positive / stock increases) */
+  --color-secondary: #2E7D32;
+  --color-secondary-100: #C8E6C9;
+  --color-secondary-500: #43A047;
+
+  /* Surfaces */
+  --color-background: #F1F5F9;
+  --color-surface: #FFFFFF;
+  --color-on-primary: #FFFFFF;
+  --color-on-secondary: #FFFFFF;
+  --color-on-background: #0F172A;
+  --color-on-surface: #1E293B;
+  --color-border: #E2E8F0;
+  --color-muted: #F8FAFC;
+  --color-muted-foreground: #64748B;
+
+  /* Semantic */
+  --color-success: #2E7D32;
+  --color-success-bg: #F0FDF4;
+  --color-error: #C62828;
+  --color-error-bg: #FFF1F2;
+  --color-warning: #B45309;
+  --color-warning-bg: #FFFBEB;
+  --color-info: #1565C0;
+  --color-info-bg: #EFF6FF;
+
+  /* Sidebar (dark navy) */
+  --color-sidebar-bg: #0F172A;
+  --color-sidebar-text: #94A3B8;
+  --color-sidebar-text-active: #F8FAFC;
+  --color-sidebar-item-active: rgba(248, 250, 252, 0.08);
+  --color-sidebar-border: #1E293B;
+  --color-sidebar-group-label: #475569;
+
+  /* Header */
+  --color-header-bg: #FFFFFF;
+  --color-header-border: #E2E8F0;
+
+  /* Border radius */
+  --border-radius: 0.5rem;
+}
+
+/* ── Base styles ─────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: 'Manrope', sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-on-background);
+  line-height: 1.5;
+}
+
+/* ── Focus rings (accessibility) ────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Numeric data ────────────────────────────────────────── */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Keyframes ───────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+@keyframes slideInLeft {
+  from { transform: translateX(-16px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+
+/* ── Sidebar transition ──────────────────────────────────── */
+.sidebar-transition {
+  transition: width 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Skeleton pulse ──────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-border) 25%,
+    var(--color-muted) 50%,
+    var(--color-border) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Scrollbar ───────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-muted-foreground); }
+
+/* ── Login brand panel overlay ──────────────────────────── */
+.login-brand-overlay {
+  background-image:
+    radial-gradient(circle at 18% 80%, rgba(255, 255, 255, 0.12) 0%, transparent 55%),
+    radial-gradient(circle at 82% 20%, rgba(198, 40, 40, 0.18) 0%, transparent 50%);
+}
+
+/* ── Reduced motion ──────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Component utilities ─────────────────────────────────── */
+@layer components {
+  .card {
+    @apply bg-surface rounded-lg shadow-elevation-1 border border-border;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-editor {
+    @apply bg-infoBackground text-info;
+  }
+
+  .badge-viewer {
+    @apply bg-muted text-muted-foreground;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+           text-sidebarText transition-colors duration-150 cursor-pointer
+           hover:bg-sidebarActive hover:text-sidebarTextActive;
+  }
+
+  .nav-item-active {
+    @apply bg-sidebarActive text-sidebarTextActive;
+  }
+}

@@ -64,4 +64,4 @@ services:
         fromService:
           name: stockledger-backend
           type: web
-          property: hostURL
+          property: host

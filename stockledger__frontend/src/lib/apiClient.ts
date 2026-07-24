@@ -8,7 +8,9 @@
  *   so the login form can display the inline error banner.
  */
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
+const _rawBase = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
+// Render's `fromService.host` returns a bare hostname — ensure it has a scheme.
+const BASE_URL = _rawBase && !_rawBase.startsWith('http') ? `https://${_rawBase}` : _rawBase;
 const MAX_RETRIES = 2;
 const TIMEOUT_MS = 10_000;
 

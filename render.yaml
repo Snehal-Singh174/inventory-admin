@@ -6,7 +6,7 @@ databases:
 
 services:
   # ─── Database migration / seed job ─────────────────────────────────────────
-  - type: worker
+  - type: web
     name: stockledger-database
     runtime: node
     rootDir: stockledger__database

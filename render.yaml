@@ -42,7 +42,7 @@ services:
     name: inventrack-frontend
     runtime: static
     buildCommand: npm install && npm run build
-    staticPublishPath: ./inventrack__frontend/build
+    staticPublishPath: ./build
     rootDir: inventrack__frontend
     routes:
       - type: rewrite

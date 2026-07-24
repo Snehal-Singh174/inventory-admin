@@ -44,7 +44,6 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: ./inventrack__frontend/build
     rootDir: inventrack__frontend
-    plan: free
     routes:
       - type: rewrite
         source: /*
